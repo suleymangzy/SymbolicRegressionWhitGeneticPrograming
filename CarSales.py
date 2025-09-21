@@ -36,7 +36,7 @@ y = df_encoded["Price"]
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=42 )
 
 est_gp = SymbolicRegressor(
-    population_size=5000,    # aday formüller sayısı
+    population_size=3000,    # aday formüller sayısı
     generations=20,          # nesil sayısı
     stopping_criteria=0.01,  # hata hedefi
     p_crossover=0.7,         # çaprazlama
