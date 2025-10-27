@@ -1,7 +1,8 @@
 import openml
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Tuple, Union
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from gplearn.genetic import SymbolicTransformer, SymbolicRegressor
 from evolutionary_forest.forest import EvolutionaryForestRegressor
@@ -39,24 +40,70 @@ def apply_z_score_standardization(X: pd.DataFrame, y: Union[pd.Series, pd.DataFr
     return X_transformed, y_transformed
 
 
-def select_top_features(feature_importance_dict: Dict[str, float], X_train_transformed: np.ndarray,
-                        X_test_transformed: np.ndarray, features_size: int) -> Tuple[np.ndarray, np.ndarray]:
+def select_ef_features_by_threshold(feature_importance_dict: Dict[str, float], X_train_transformed: np.ndarray,
+                                    X_test_transformed: np.ndarray, min_importance_threshold: float
+                                    ) -> Tuple[np.ndarray, np.ndarray]:
 
-    sorted_features: List[Tuple[str, float]] = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
+    sorted_features = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
 
-    top_n_features: List[Tuple[str, float]] = sorted_features[:features_size]
+    selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
 
-    feature_names_list = list(feature_importance_dict.keys())
+    if not selected:
+        print(f"⚠️ Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
+        selected = sorted_features[:3]
+        print(f"➡️ Selecting top 3 features instead: {[name for name, _ in selected]}")
 
-    top_indices: List[int] = [feature_names_list.index(f[0]) for f in top_n_features]
+    all_feature_names = list(feature_importance_dict.keys())
+    selected_indices = [all_feature_names.index(name) for name, _ in selected]
 
-    X_train_top: np.ndarray = X_train_transformed[:, top_indices]
-    X_test_top: np.ndarray = X_test_transformed[:, top_indices]
+    X_train_selected = X_train_transformed[:, selected_indices]
+    X_test_selected = X_test_transformed[:, selected_indices]
 
-    return X_train_top, X_test_top
+    print(f"✅ Selected {len(selected_indices)} out of {len(all_feature_names)} EF features.")
+
+    return X_train_selected, X_test_selected
+
+
+
+def select_st_features_by_threshold(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, st_train: np.ndarray,
+                                    st_test: np.ndarray, min_importance_threshold: float) -> Tuple[np.ndarray, np.ndarray]:
+
+    X_train_transformed = np.hstack([X_train, st_train])
+    X_test_transformed = np.hstack([X_test, st_test])
+
+    rf = RandomForestRegressor(n_estimators=200, random_state=42)
+    rf.fit(X_train_transformed, y_train)
+
+    importances = rf.feature_importances_
+
+    orig_names = [f"X{i}" for i in range(X_train.shape[1])]
+    st_names = [f"ST_feat_{i}" for i in range(st_train.shape[1])]
+    all_feature_names = orig_names + st_names
+
+    feature_importance_dict = dict(zip(all_feature_names, importances))
+
+    sorted_features = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
+
+    selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
+
+    if not selected:
+        print(f"⚠️ Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
+        selected = sorted_features[:3]
+        print(f"➡️ Selecting top 3 features instead: {[name for name, _ in selected]}")
+
+    all_feature_names = list(feature_importance_dict.keys())
+    selected_indices = [all_feature_names.index(name) for name, _ in selected]
+
+    X_train_selected = X_train_transformed[:, selected_indices]
+    X_test_selected = X_test_transformed[:, selected_indices]
+
+    print(f"✅ Selected {len(selected_indices)} out of {len(all_feature_names)}  ST features.")
+
+    return X_train_selected, X_test_selected
 
 
 def comparison_ef_srgp(sets_id: list) -> pd.DataFrame:
+
     results_list = []
 
     for set_id_val in sets_id:
@@ -109,7 +156,8 @@ def comparison_ef_srgp(sets_id: list) -> pd.DataFrame:
     return results_df_sorted
 
 
-def comparison_whit_gp_transgormer(sets_id: list, orginal_features: bool) -> pd.DataFrame:
+def comparison_whit_gp_transgormer(sets_id: list, min_importance_threshold: float, orginal_features: bool) -> pd.DataFrame:
+
     results_list = []
 
     for set_id_val in sets_id:
@@ -120,20 +168,37 @@ def comparison_whit_gp_transgormer(sets_id: list, orginal_features: bool) -> pd.
         X = categorize_to_numeric(X)
         X, y = apply_z_score_standardization(X, y)
 
-        X_train, X_test, y_train, y_test = train_test_split(X.values, y.values if isinstance(y, pd.Series) else y, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X.values, y.values if isinstance(y, pd.Series) else y,
+                                                            test_size=0.2, random_state=42)
 
-        st = SymbolicTransformer()
+        st = SymbolicTransformer(
+            generations=20,
+            population_size=2000,
+            hall_of_fame=100,
+            n_components=50,
+            random_state=42
+        )
+
         st.fit(X_train, y_train)
 
         X_train_st = st.transform(X_train)
         X_test_st = st.transform(X_test)
 
+        X_train_top_st, X_test_top_st= select_st_features_by_threshold(
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            st_train=X_train_st,
+            st_test=X_test_st,
+            min_importance_threshold=min_importance_threshold
+        )
+
         if orginal_features:
-            X_train_new = np.hstack((X_train, X_train_st))
-            X_test_new = np.hstack((X_test, X_test_st))
+            X_train_new = np.hstack((X_train, X_train_top_st))
+            X_test_new = np.hstack((X_test, X_test_top_st))
         else:
-            X_train_new = X_train_st
-            X_test_new = X_test_st
+            X_train_new = X_train_top_st
+            X_test_new = X_test_top_st
 
         r = EvolutionaryForestRegressor()
         r.fit(X_train_new, y_train)
@@ -171,7 +236,9 @@ def comparison_whit_gp_transgormer(sets_id: list, orginal_features: bool) -> pd.
     return results_df_sorted
 
 
-def feature_extraction_and_model_training(set_id: list, aos: bool, orginal_features: bool) -> pd.DataFrame:
+def feature_extraction_and_model_training(set_id: list, min_importance_threshold: float, aos: bool,
+                                          orginal_features: bool) -> pd.DataFrame:
+
     results_list = []
 
     for set_id_val in set_id:
@@ -179,8 +246,6 @@ def feature_extraction_and_model_training(set_id: list, aos: bool, orginal_featu
         dataset = openml.datasets.get_dataset(set_id_val)
 
         X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
-
-        features_size = X.shape[1]
 
         X = categorize_to_numeric(X)
 
@@ -213,29 +278,47 @@ def feature_extraction_and_model_training(set_id: list, aos: bool, orginal_featu
             r = EvolutionaryForestRegressor()
             r.fit(X_train, y_train)
 
+        X_train_ef = r.transform(X_train)
+        X_test_ef = r.transform(X_test)
+
         feature_importance_dict = get_feature_importance(r)
 
-        X_train_top, X_test_top = select_top_features(
+        X_train_top_ef, X_test_top_ef = select_ef_features_by_threshold(
             feature_importance_dict=feature_importance_dict,
-            X_train_transformed=X_train,
-            X_test_transformed=X_test,
-            features_size=features_size
+            X_train_transformed=X_train_ef,
+            X_test_transformed=X_test_ef,
+            min_importance_threshold=min_importance_threshold,
         )
 
-        st = SymbolicTransformer()
+        st = SymbolicTransformer(
+            generations=20,
+            population_size=2000,
+            hall_of_fame=100,
+            n_components=50,
+            random_state=42
+        )
 
         st.fit(X_train, y_train)
 
         X_train_st = st.transform(X_train)
         X_test_st = st.transform(X_test)
 
+        X_train_top_st, X_test_top_st = select_st_features_by_threshold(
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            st_train=X_train_st,
+            st_test=X_test_st,
+            min_importance_threshold=min_importance_threshold
+        )
+
         if orginal_features:
 
-            new_train = np.hstack((X_train, X_train_top, X_train_st))
-            new_test = np.hstack((X_test, X_test_top, X_test_st))
+            new_train = np.hstack((X_train, X_train_top_ef, X_train_top_st))
+            new_test = np.hstack((X_test, X_test_top_ef, X_test_top_st))
         else:
-            new_train = np.hstack((X_train_top, X_train_st))
-            new_test = np.hstack((X_test_top, X_test_st))
+            new_train = np.hstack((X_train_top_ef, X_train_top_st))
+            new_test = np.hstack((X_test_top_ef, X_test_top_st))
 
         est_gp = SymbolicRegressor()
 
