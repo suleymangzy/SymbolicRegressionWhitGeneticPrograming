@@ -49,9 +49,9 @@ def select_ef_features_by_threshold(feature_importance_dict: Dict[str, float], X
     selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
 
     if not selected:
-        print(f"⚠️ Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
+        print(f"Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
         selected = sorted_features[:3]
-        print(f"➡️ Selecting top 3 features instead: {[name for name, _ in selected]}")
+        print(f"Selecting top 3 features instead: {[name for name, _ in selected]}")
 
     all_feature_names = list(feature_importance_dict.keys())
     selected_indices = [all_feature_names.index(name) for name, _ in selected]
@@ -59,7 +59,7 @@ def select_ef_features_by_threshold(feature_importance_dict: Dict[str, float], X
     X_train_selected = X_train_transformed[:, selected_indices]
     X_test_selected = X_test_transformed[:, selected_indices]
 
-    print(f"✅ Selected {len(selected_indices)} out of {len(all_feature_names)} EF features.")
+    print(f"Selected {len(selected_indices)} out of {len(all_feature_names)} EF features.")
 
     return X_train_selected, X_test_selected
 
@@ -87,9 +87,9 @@ def select_st_features_by_threshold(X_train: np.ndarray, y_train: np.ndarray, X_
     selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
 
     if not selected:
-        print(f"⚠️ Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
+        print(f"Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
         selected = sorted_features[:3]
-        print(f"➡️ Selecting top 3 features instead: {[name for name, _ in selected]}")
+        print(f"Selecting top 3 features instead: {[name for name, _ in selected]}")
 
     all_feature_names = list(feature_importance_dict.keys())
     selected_indices = [all_feature_names.index(name) for name, _ in selected]
@@ -97,7 +97,7 @@ def select_st_features_by_threshold(X_train: np.ndarray, y_train: np.ndarray, X_
     X_train_selected = X_train_transformed[:, selected_indices]
     X_test_selected = X_test_transformed[:, selected_indices]
 
-    print(f"✅ Selected {len(selected_indices)} out of {len(all_feature_names)}  ST features.")
+    print(f"Selected {len(selected_indices)} out of {len(all_feature_names)}  ST features.")
 
     return X_train_selected, X_test_selected
 
