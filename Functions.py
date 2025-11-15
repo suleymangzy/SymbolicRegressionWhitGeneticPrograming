@@ -43,7 +43,6 @@ def apply_z_score_standardization(X: pd.DataFrame, y: Union[pd.Series, pd.DataFr
 def select_ef_features_by_threshold(feature_importance_dict: Dict[str, float], X_train_transformed: np.ndarray,
                                     X_test_transformed: np.ndarray, min_importance_threshold: float
                                     ) -> Tuple[np.ndarray, np.ndarray]:
-
     sorted_features = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
 
     selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
@@ -64,10 +63,9 @@ def select_ef_features_by_threshold(feature_importance_dict: Dict[str, float], X
     return X_train_selected, X_test_selected
 
 
-
 def select_st_features_by_threshold(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, st_train: np.ndarray,
-                                    st_test: np.ndarray, min_importance_threshold: float) -> Tuple[np.ndarray, np.ndarray]:
-
+                                    st_test: np.ndarray, min_importance_threshold: float) -> Tuple[
+    np.ndarray, np.ndarray]:
     X_train_transformed = np.hstack([X_train, st_train])
     X_test_transformed = np.hstack([X_test, st_test])
 
@@ -103,7 +101,6 @@ def select_st_features_by_threshold(X_train: np.ndarray, y_train: np.ndarray, X_
 
 
 def comparison_ef_srgp(sets_id: list) -> pd.DataFrame:
-
     results_list = []
 
     for set_id_val in sets_id:
@@ -156,8 +153,8 @@ def comparison_ef_srgp(sets_id: list) -> pd.DataFrame:
     return results_df_sorted
 
 
-def comparison_whit_gp_transgormer(sets_id: list, min_importance_threshold: float, orginal_features: bool) -> pd.DataFrame:
-
+def comparison_whit_gp_transgormer(sets_id: list, min_importance_threshold: float,
+                                   orginal_features: bool) -> pd.DataFrame:
     results_list = []
 
     for set_id_val in sets_id:
@@ -184,7 +181,7 @@ def comparison_whit_gp_transgormer(sets_id: list, min_importance_threshold: floa
         X_train_st = st.transform(X_train)
         X_test_st = st.transform(X_test)
 
-        X_train_top_st, X_test_top_st= select_st_features_by_threshold(
+        X_train_top_st, X_test_top_st = select_st_features_by_threshold(
             X_train=X_train,
             y_train=y_train,
             X_test=X_test,
@@ -238,7 +235,6 @@ def comparison_whit_gp_transgormer(sets_id: list, min_importance_threshold: floa
 
 def feature_extraction_and_model_training(set_id: list, min_importance_threshold: float, aos: bool,
                                           orginal_features: bool) -> pd.DataFrame:
-
     results_list = []
 
     for set_id_val in set_id:
@@ -344,3 +340,85 @@ def feature_extraction_and_model_training(set_id: list, min_importance_threshold
     print(results_df_sorted.to_markdown(index=False, floatfmt=".4f", tablefmt="github"))
 
     return results_df_sorted
+
+
+def feature_extraction_ef(sets_id: list) -> pd.DataFrame:
+    results_list = []
+
+    for set_id_val in sets_id:
+        dataset = openml.datasets.get_dataset(set_id_val)
+
+        X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
+
+        X = categorize_to_numeric(X)
+
+        X, y = apply_z_score_standardization(X, y)
+
+        X_train, X_test, y_train, y_test = train_test_split(X.values, y.values if isinstance(y, pd.Series) else y,
+                                                            test_size=0.2,
+                                                            random_state=42
+                                                            )
+
+        srgp = SymbolicRegressor()
+        srgp.fit(X_train, y_train)
+
+        srgp_train_r2 = r2_score(y_train, srgp.predict(X_train))
+        srgp_test_r2 = r2_score(y_test, srgp.predict(X_test))
+
+        ef = EvolutionaryForestRegressor()
+        ef.fit(X_train, y_train)
+
+        X_train_ef = ef.transform(X_train)
+        X_test_ef = ef.transform(X_test)
+
+        k_features_to_select = X_train.shape[1]
+
+        if k_features_to_select > X_train_ef.shape[1]:
+
+            X_train_selected = X_train_ef
+            X_test_selected = X_test_ef
+
+            # size = k_features_to_select - X_train_ef.shape[1]
+            # X_train_selected = np.hstack((X_train[:, :size], X_train_ef))
+            # X_test_selected = np.hstack((X_test[:, :size], X_test_ef))
+        else:
+            n_ef_features = X_train_ef.shape[1]
+
+            feature_importance_dict = get_feature_importance(ef)
+            all_feature_names = list(feature_importance_dict.keys())
+
+            sorted_indices = sorted(
+                range(len(all_feature_names)),
+                key=lambda k: feature_importance_dict[all_feature_names[k]],
+                reverse=True
+            )
+
+            valid_indices = [i for i in sorted_indices if i < n_ef_features]
+            selected_indices = valid_indices[:k_features_to_select]
+
+            X_train_selected = X_train_ef[:, selected_indices]
+            X_test_selected = X_test_ef[:, selected_indices]
+
+        srgp.fit(X_train_selected, y_train)
+
+        srgp_ef_train_r2 = r2_score(y_train, srgp.predict(X_train_selected))
+        srgp_ef_test_r2 = r2_score(y_test, srgp.predict(X_test_selected))
+
+        results_list.append({
+            'Set_ID': set_id_val,
+            'Dataset_Name': dataset.name,
+            'SRGP_Train_R2_Score': srgp_train_r2,
+            'SRGP_Test_R2_Score': srgp_test_r2,
+            'SRGP_EF_Train_R2_Score': srgp_ef_train_r2,
+            'SRGP_EF_Test_R2_Score': srgp_ef_test_r2,
+        })
+
+    results_df = pd.DataFrame(results_list)
+
+    results_df_sorted = results_df.sort_values(by='Set_ID', ascending=False)
+
+    print(results_df_sorted.to_markdown(index=False, floatfmt=".4f", tablefmt="github"))
+
+    return results_df_sorted
+
+# def feature_extraction_srgp(sets_id: list) -> pd.DataFrame:
