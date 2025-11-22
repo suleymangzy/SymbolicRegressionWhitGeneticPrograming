@@ -326,3 +326,205 @@ def stgp_fe(sets_id):
     visualize_general_results(general_base, general_imp, general_diff)
 
     return pivot_df
+
+def ef_fe(sets_id):
+    np.seterr(divide='ignore', invalid='ignore')
+    all_results = []
+
+    print(f"{'=' * 20} Analiz Başlıyor {'=' * 20}")
+
+    for set_id_val in sets_id:
+        try:
+            dataset = openml.datasets.get_dataset(set_id_val)
+            d_name = f"{dataset.name[:8]}..({set_id_val})"
+            print(f">> İşleniyor: {d_name}")
+
+            X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
+
+            X = categorize_to_numeric1(X)
+            X, y = apply_z_score_standardization1(X, y)
+
+            X_vals = np.nan_to_num(X.values.astype(np.float64))
+            y_vals = y.values if isinstance(y, pd.Series) else y
+            y_vals = y_vals.astype(np.float64)
+
+            X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            ef = EvolutionaryForestRegressor()
+            with np.errstate(divide='ignore', invalid='ignore'):
+                ef.fit(X_train, y_train)
+
+                # 2. Transform işlemi
+                # Varsayılan olarak (n_samples, 10) boyutunda matris döner.
+                X_train_ef = ef.transform(X_train)
+                X_test_ef = ef.transform(X_test)
+
+                if X_train_ef.shape[1] > 10:
+                    X_train_ef = X_train_ef[:, :10]
+                    X_test_ef = X_test_ef[:, :10]
+
+
+                # 3. NaN/Inf Temizliği
+                X_train_ef = np.nan_to_num(X_train_ef)
+                X_test_ef = np.nan_to_num(X_test_ef)
+
+            # 4. Birleştirme (Stacking)
+            # DİKKAT: .reshape(-1, 1) KALDIRILDI.
+            # Çünkü çıktı zaten 2 boyutlu (Samples x 10) formatındadır.
+            new_train = np.hstack((X_train, X_train_ef))
+            new_test = np.hstack((X_test, X_test_ef))
+            dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name)
+            all_results.extend(dataset_results)
+
+        except Exception as e:
+            print(f"Hata (ID: {set_id_val}): {e}")
+            continue
+
+    if not all_results:
+        return None
+
+    df_raw = pd.DataFrame(all_results)
+
+    # 1. PIVOT: Verileri satır/sütun formatına getir
+    pivot_df = pd.pivot_table(
+        df_raw,
+        index='Algorithm',
+        columns='Dataset',
+        values=['Base_Score', 'Improved_Score', 'Difference']
+    )
+
+    # 2. SWAP LEVEL: (Dataset, Metric) hiyerarşisine çevir
+    pivot_df = pivot_df.swaplevel(0, 1, axis=1)
+
+    # --- DÜZELTME BURADA: ÖZEL SÜTUN SIRALAMASI ---
+    # Alfabetik sıralama (sort_index) yapmıyoruz.
+    # İstediğimiz sıra: [Base_Score, Improved_Score, Difference]
+
+    desired_order = ['Base_Score', 'Improved_Score', 'Difference']
+
+    # Mevcut veri setlerinin isimlerini alıp sıralayalım
+    unique_datasets = sorted(df_raw['Dataset'].unique())
+
+    # Pandas MultiIndex ile tüm datasetler için bu özel sırayı oluştur
+    new_columns = pd.MultiIndex.from_product([unique_datasets, desired_order], names=['Dataset', 'Metric'])
+
+    # Tabloyu bu yeni sıraya göre yeniden indeksle
+    pivot_df = pivot_df.reindex(columns=new_columns)
+
+    # 3. GENERAL SÜTUNLARI (Aynı sırayla ekle)
+    general_base = df_raw.groupby('Algorithm')['Base_Score'].mean()
+    general_imp = df_raw.groupby('Algorithm')['Improved_Score'].mean()
+    general_diff = df_raw.groupby('Algorithm')['Difference'].mean()
+
+    # General sütunlarını manuel olarak istediğimiz sırada ekliyoruz
+    pivot_df[('General', 'Base_Score')] = general_base
+    pivot_df[('General', 'Improved_Score')] = general_imp
+    pivot_df[('General', 'Difference')] = general_diff
+
+    print("\n" + "#" * 30 + " SONUÇ MATRİSİ (DÜZENLENMİŞ) " + "#" * 30)
+    print(pivot_df)
+
+    visualize_general_results(general_base, general_imp, general_diff)
+
+    return pivot_df
+
+def srgp_and_stgp_fe(sets_id):
+    np.seterr(divide='ignore', invalid='ignore')
+    all_results = []
+
+    print(f"{'=' * 20} Analiz Başlıyor {'=' * 20}")
+
+    for set_id_val in sets_id:
+        try:
+            dataset = openml.datasets.get_dataset(set_id_val)
+            d_name = f"{dataset.name[:8]}..({set_id_val})"
+            print(f">> İşleniyor: {d_name}")
+
+            X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
+
+            X = categorize_to_numeric1(X)
+            X, y = apply_z_score_standardization1(X, y)
+
+            X_vals = np.nan_to_num(X.values.astype(np.float64))
+            y_vals = y.values if isinstance(y, pd.Series) else y
+            y_vals = y_vals.astype(np.float64)
+
+            X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            srgp = SymbolicRegressor()
+            with np.errstate(divide='ignore', invalid='ignore'):
+                srgp.fit(X_train, y_train)
+                expr = srgp._program
+                X_train_sr = np.nan_to_num(expr.execute(X_train).reshape(-1, 1))
+                X_test_sr = np.nan_to_num(expr.execute(X_test).reshape(-1, 1))
+
+            stgp = SymbolicTransformer()
+            with np.errstate(divide='ignore', invalid='ignore'):
+                stgp.fit(X_train, y_train)
+
+                # 2. Transform işlemi
+                # Varsayılan olarak (n_samples, 10) boyutunda matris döner.
+                X_train_st = stgp.transform(X_train)
+                X_test_st = stgp.transform(X_test)
+
+                # 3. NaN/Inf Temizliği
+                X_train_st = np.nan_to_num(X_train_st)
+                X_test_st = np.nan_to_num(X_test_st)
+
+            new_train = np.hstack((X_train, X_train_sr, X_train_st))
+            new_test = np.hstack((X_test, X_test_sr, X_test_st))
+
+            dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name)
+            all_results.extend(dataset_results)
+
+        except Exception as e:
+            print(f"Hata (ID: {set_id_val}): {e}")
+            continue
+
+    if not all_results:
+        return None
+
+    df_raw = pd.DataFrame(all_results)
+
+    # 1. PIVOT: Verileri satır/sütun formatına getir
+    pivot_df = pd.pivot_table(
+        df_raw,
+        index='Algorithm',
+        columns='Dataset',
+        values=['Base_Score', 'Improved_Score', 'Difference']
+    )
+
+    # 2. SWAP LEVEL: (Dataset, Metric) hiyerarşisine çevir
+    pivot_df = pivot_df.swaplevel(0, 1, axis=1)
+
+    # --- DÜZELTME BURADA: ÖZEL SÜTUN SIRALAMASI ---
+    # Alfabetik sıralama (sort_index) yapmıyoruz.
+    # İstediğimiz sıra: [Base_Score, Improved_Score, Difference]
+
+    desired_order = ['Base_Score', 'Improved_Score', 'Difference']
+
+    # Mevcut veri setlerinin isimlerini alıp sıralayalım
+    unique_datasets = sorted(df_raw['Dataset'].unique())
+
+    # Pandas MultiIndex ile tüm datasetler için bu özel sırayı oluştur
+    new_columns = pd.MultiIndex.from_product([unique_datasets, desired_order], names=['Dataset', 'Metric'])
+
+    # Tabloyu bu yeni sıraya göre yeniden indeksle
+    pivot_df = pivot_df.reindex(columns=new_columns)
+
+    # 3. GENERAL SÜTUNLARI (Aynı sırayla ekle)
+    general_base = df_raw.groupby('Algorithm')['Base_Score'].mean()
+    general_imp = df_raw.groupby('Algorithm')['Improved_Score'].mean()
+    general_diff = df_raw.groupby('Algorithm')['Difference'].mean()
+
+    # General sütunlarını manuel olarak istediğimiz sırada ekliyoruz
+    pivot_df[('General', 'Base_Score')] = general_base
+    pivot_df[('General', 'Improved_Score')] = general_imp
+    pivot_df[('General', 'Difference')] = general_diff
+
+    print("\n" + "#" * 30 + " SONUÇ MATRİSİ (DÜZENLENMİŞ) " + "#" * 30)
+    print(pivot_df)
+
+    visualize_general_results(general_base, general_imp, general_diff)
+
+    return pivot_df
