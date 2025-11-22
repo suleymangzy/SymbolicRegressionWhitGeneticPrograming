@@ -2,13 +2,19 @@ import openml
 import pandas as pd
 import numpy as np
 from typing import Dict, Tuple, Union
-from sklearn.ensemble import RandomForestRegressor
+import matplotlib.pyplot as plt
+import seaborn as sns
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, AdaBoostRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from gplearn.genetic import SymbolicTransformer, SymbolicRegressor
 from evolutionary_forest.forest import EvolutionaryForestRegressor
 from evolutionary_forest.utils import get_feature_importance
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
+from sklearn.base import clone
+from xgboost import XGBRegressor
 
 
 def categorize_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -375,12 +381,10 @@ def feature_extraction_ef(sets_id: list) -> pd.DataFrame:
 
         if k_features_to_select > X_train_ef.shape[1]:
 
-            X_train_selected = X_train_ef
-            X_test_selected = X_test_ef
+            size = k_features_to_select - X_train_ef.shape[1]
+            X_train_selected = np.hstack((X_train[:, :size], X_train_ef))
+            X_test_selected = np.hstack((X_test[:, :size], X_test_ef))
 
-            # size = k_features_to_select - X_train_ef.shape[1]
-            # X_train_selected = np.hstack((X_train[:, :size], X_train_ef))
-            # X_test_selected = np.hstack((X_test[:, :size], X_test_ef))
         else:
             n_ef_features = X_train_ef.shape[1]
 
@@ -421,4 +425,7 @@ def feature_extraction_ef(sets_id: list) -> pd.DataFrame:
 
     return results_df_sorted
 
-# def feature_extraction_srgp(sets_id: list) -> pd.DataFrame:
+
+
+
+
