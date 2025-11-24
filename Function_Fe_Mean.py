@@ -53,9 +53,6 @@ pd.set_option('display.float_format', '{:.4f}'.format)
 
 
 def get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, dataset_name):
-    """
-    Tek bir veri seti için skorları ve FARKI hesaplar.
-    """
     regressor_list = ['RF', 'ET', 'AdaBoost', 'GBDT', 'DART', 'XGBoost', 'LightGBM', 'CatBoost']
 
     regressor_dict = {
@@ -105,9 +102,6 @@ def get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, 
 
 
 def visualize_general_results(base_series, imp_series, diff_series):
-    """
-    General ortalamaları ve farkı grafiğe döker.
-    """
     sns.set(style="whitegrid", font_scale=1.1)
     plot_df = pd.DataFrame({
         'Base': base_series,
