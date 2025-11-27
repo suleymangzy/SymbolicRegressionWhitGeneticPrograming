@@ -10,20 +10,13 @@ from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 from gplearn.genetic import SymbolicTransformer
 from evolutionary_forest.forest import EvolutionaryForestRegressor
-from evolutionary_forest.utils import get_feature_importance
-
-from Functions import (
-    select_ef_features_by_threshold,
-    categorize_to_numeric, select_st_features_by_threshold
-)
+from Comparison import categorize_to_numeric
 
 warnings.filterwarnings("ignore")
 
 
 def evaluate_models(X_train_new, X_test_new, y_train, y_test, dataset_name, method_name):
-    """
-    Verilen feature setleri ile modelleri eğitir ve sonuçları döndürür.
-    """
+
     regressor_dict = {
         'RF': RandomForestRegressor(n_estimators=200, n_jobs=-1, random_state=42),
         'XGBoost': XGBRegressor(n_jobs=1, n_estimators=200, verbosity=0, random_state=42),
