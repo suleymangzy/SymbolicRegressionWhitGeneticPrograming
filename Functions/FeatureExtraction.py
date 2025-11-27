@@ -2,52 +2,17 @@ import warnings
 import openml
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple, Union
-import matplotlib.pyplot as plt
-import seaborn as sns
 from catboost import CatBoostRegressor
 from lightgbm import LGBMRegressor
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, AdaBoostRegressor, GradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler
 from gplearn.genetic import SymbolicTransformer, SymbolicRegressor
 from evolutionary_forest.forest import EvolutionaryForestRegressor
-from evolutionary_forest.utils import get_feature_importance
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from sklearn.base import clone
+from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
-
-from Functions import select_st_features_by_threshold, select_ef_features_by_threshold
-
-
-def categorize_to_numeric1(df: pd.DataFrame) -> pd.DataFrame:
-    df_transformed = df.copy()
-
-    non_numeric_cols = df_transformed.select_dtypes(include=['object', 'category']).columns.tolist()
-
-    df_transformed = pd.get_dummies(df_transformed, columns=non_numeric_cols)
-
-    return df_transformed
-
-
-def apply_z_score_standardization1(X: pd.DataFrame, y: Union[pd.Series, pd.DataFrame]) -> Tuple[pd.DataFrame, pd.Series]:
-    X_transformed = X.copy()
-    y_transformed = y.copy()
-
-    numeric_cols = X_transformed.select_dtypes(include=np.number).columns.tolist()
-
-    scaler_X = StandardScaler()
-    X_transformed[numeric_cols] = scaler_X.fit_transform(X_transformed[numeric_cols])
-
-    if isinstance(y_transformed, pd.Series):
-        y_array = y_transformed.values.reshape(-1, 1)
-        scaler_y = StandardScaler()
-        y_scaled = scaler_y.fit_transform(y_array)
-
-        y_transformed = pd.Series(y_scaled.flatten(), index=y_transformed.index, name=y_transformed.name)
-
-    return X_transformed, y_transformed
-
+from Functions.Comparison import categorize_to_numeric
 
 warnings.filterwarnings('ignore')
 pd.set_option('display.max_columns', None)
@@ -100,40 +65,6 @@ def get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, 
 
     return results
 
-
-def visualize_general_results(base_series, imp_series, diff_series):
-    sns.set(style="whitegrid", font_scale=1.1)
-    plot_df = pd.DataFrame({
-        'Base': base_series,
-        'Improved': imp_series,
-        'Difference': diff_series
-    }).sort_index()
-
-    x = np.arange(len(plot_df))
-    width = 0.35
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    ax.bar(x - width / 2, plot_df['Base'], width, label='General Mean Base', color='skyblue')
-
-    colors = np.where(plot_df['Difference'] > 0, 'mediumseagreen', 'salmon')
-    ax.bar(x + width / 2, plot_df['Improved'], width, label='General Mean Improved', color=colors)
-
-    ax.set_ylabel('Average $R^2$ Score')
-    ax.set_title('General Performance Comparison (Difference Based)')
-    ax.set_xticks(x)
-    ax.set_xticklabels(plot_df.index, rotation=45)
-    ax.legend()
-
-    for i, v in enumerate(plot_df['Difference']):
-        height = max(plot_df['Base'].iloc[i], plot_df['Improved'].iloc[i])
-        color = 'green' if v > 0 else 'red'
-        ax.text(i + width / 2, height + 0.02, f"{v:+.4f}",
-                ha='center', va='bottom', color=color, fontweight='bold', fontsize=10)
-
-    plt.tight_layout()
-    plt.show()
-
-
 def srgp_fe(sets_id):
     np.seterr(divide='ignore', invalid='ignore')
     all_results = []
@@ -143,17 +74,23 @@ def srgp_fe(sets_id):
             dataset = openml.datasets.get_dataset(set_id_val)
             d_name = f"{dataset.name}({set_id_val})"
 
-
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             srgp = SymbolicRegressor()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -203,8 +140,6 @@ def srgp_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
 
 def stgp_fe(sets_id):
@@ -218,14 +153,21 @@ def stgp_fe(sets_id):
 
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             stgp = SymbolicTransformer()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -276,8 +218,6 @@ def stgp_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
 
 def ef_fe(sets_id):
@@ -288,16 +228,24 @@ def ef_fe(sets_id):
         try:
             dataset = openml.datasets.get_dataset(set_id_val)
             d_name = f"{dataset.name}({set_id_val})"
+
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             ef = EvolutionaryForestRegressor()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -350,8 +298,6 @@ def ef_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
 
 def srgp_and_stgp_fe(sets_id):
@@ -365,14 +311,21 @@ def srgp_and_stgp_fe(sets_id):
 
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             srgp = SymbolicRegressor()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -426,8 +379,6 @@ def srgp_and_stgp_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
 
 def srgp_and_ef_fe(sets_id):
@@ -441,14 +392,21 @@ def srgp_and_ef_fe(sets_id):
 
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             srgp = SymbolicRegressor()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -511,9 +469,6 @@ def srgp_and_ef_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
 
 def stgp_and_ef_fe(sets_id):
@@ -527,14 +482,21 @@ def stgp_and_ef_fe(sets_id):
 
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             stgp = SymbolicTransformer()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -601,8 +563,6 @@ def stgp_and_ef_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
 
 def srgp_and_stgp_and_ef_fe(sets_id):
@@ -616,14 +576,21 @@ def srgp_and_stgp_and_ef_fe(sets_id):
 
             X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
 
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
+            X = categorize_to_numeric(X)
 
             X_vals = np.nan_to_num(X.values.astype(np.float64))
             y_vals = y.values if isinstance(y, pd.Series) else y
             y_vals = y_vals.astype(np.float64)
 
             X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             srgp = SymbolicRegressor()
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -696,281 +663,4 @@ def srgp_and_stgp_and_ef_fe(sets_id):
     pivot_df[('General', 'Improved_Score')] = general_imp
     pivot_df[('General', 'Difference')] = general_diff
 
-    visualize_general_results(general_base, general_imp, general_diff)
-
     return pivot_df
-
-
-def feature_extraction(sets_id, fe_model, min_importance_threshold, algorithm):
-    # Hata yakalama ve uyarıları kapatma
-    np.seterr(divide='ignore', invalid='ignore')
-    all_results = []
-
-    for set_id_val in sets_id:
-        try:
-            dataset = openml.datasets.get_dataset(set_id_val)
-            d_name = f"{dataset.name}({set_id_val})"
-
-            X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
-
-            # Ön işlemler (Fonksiyonların tanımlı olduğu varsayılmıştır)
-            X = categorize_to_numeric1(X)
-            X, y = apply_z_score_standardization1(X, y)
-
-            X_vals = np.nan_to_num(X.values.astype(np.float64))
-            y_vals = y.values if isinstance(y, pd.Series) else y
-            y_vals = y_vals.astype(np.float64)
-
-            X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
-
-            # --- SRGP BLOK ---
-            if fe_model == 'SRGP':
-                srgp = SymbolicRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    srgp.fit(X_train, y_train)
-                    expr = srgp._program
-
-                    X_train_sr = np.nan_to_num(expr.execute(X_train).reshape(-1, 1))
-                    X_test_sr = np.nan_to_num(expr.execute(X_test).reshape(-1, 1))
-
-                new_train = np.hstack((X_train, X_train_sr))
-                new_test = np.hstack((X_test, X_test_sr))
-
-                # algorithm parametresi eklendi
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-            # --- STGP BLOK ---
-            elif fe_model == 'STGP':
-                stgp = SymbolicTransformer()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    stgp.fit(X_train, y_train)
-
-                    X_train_st = stgp.transform(X_train)
-                    X_test_st = stgp.transform(X_test)
-
-                    X_train_st = np.nan_to_num(X_train_st)
-                    X_test_st = np.nan_to_num(X_test_st)
-
-                X_train_top_st, X_test_top_st = select_st_features_by_threshold(
-                    X_train=X_train,
-                    y_train=y_train,
-                    X_test=X_test,
-                    st_train=X_train_st,
-                    st_test=X_test_st,
-                    min_importance_threshold=min_importance_threshold
-                )
-
-                new_train = np.hstack((X_train, X_train_top_st))
-                new_test = np.hstack((X_test, X_test_top_st))
-
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-            # --- EF BLOK ---
-            elif fe_model == 'EF':
-                ef = EvolutionaryForestRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ef.fit(X_train, y_train)
-
-                    X_train_ef = ef.transform(X_train)
-                    X_test_ef = ef.transform(X_test)
-
-                    X_train_ef = np.nan_to_num(X_train_ef)
-                    X_test_ef = np.nan_to_num(X_test_ef)
-
-                feature_importance_dict = get_feature_importance(ef)
-
-                X_train_top_ef, X_test_top_ef = select_ef_features_by_threshold(
-                    feature_importance_dict=feature_importance_dict,
-                    X_train_transformed=X_train_ef,
-                    X_test_transformed=X_test_ef,
-                    min_importance_threshold=min_importance_threshold,
-                )
-
-                new_train = np.hstack((X_train, X_train_top_ef))
-                # DÜZELTME: X_test_ef yerine X_test_top_ef kullanıldı
-                new_test = np.hstack((X_test, X_test_top_ef))
-
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-            # --- SRGP + STGP BLOK ---
-            elif fe_model == 'SRGP+STGP':
-                # SRGP Kısmı
-                srgp = SymbolicRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    srgp.fit(X_train, y_train)
-                    expr = srgp._program
-                    X_train_sr = np.nan_to_num(expr.execute(X_train).reshape(-1, 1))
-                    X_test_sr = np.nan_to_num(expr.execute(X_test).reshape(-1, 1))
-
-                # STGP Kısmı
-                stgp = SymbolicTransformer()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    stgp.fit(X_train, y_train)
-                    X_train_st = stgp.transform(X_train)
-                    X_test_st = stgp.transform(X_test)
-                    X_train_st = np.nan_to_num(X_train_st)
-                    X_test_st = np.nan_to_num(X_test_st)
-
-                X_train_top_st, X_test_top_st = select_st_features_by_threshold(
-                    X_train=X_train, y_train=y_train, X_test=X_test,
-                    st_train=X_train_st, st_test=X_test_st,
-                    min_importance_threshold=min_importance_threshold
-                )
-
-                new_train = np.hstack((X_train, X_train_sr, X_train_top_st))
-                new_test = np.hstack((X_test, X_test_sr, X_test_top_st))
-
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-            # --- SRGP + EF BLOK ---
-            elif fe_model == 'SRGP+EF':
-                # SRGP Kısmı
-                srgp = SymbolicRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    srgp.fit(X_train, y_train)
-                    expr = srgp._program
-                    X_train_sr = np.nan_to_num(expr.execute(X_train).reshape(-1, 1))
-                    X_test_sr = np.nan_to_num(expr.execute(X_test).reshape(-1, 1))
-
-                # EF Kısmı
-                ef = EvolutionaryForestRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ef.fit(X_train, y_train)
-                    X_train_ef = ef.transform(X_train)
-                    X_test_ef = ef.transform(X_test)
-                    X_train_ef = np.nan_to_num(X_train_ef)
-                    X_test_ef = np.nan_to_num(X_test_ef)
-
-                feature_importance_dict = get_feature_importance(ef)
-
-                X_train_top_ef, X_test_top_ef = select_ef_features_by_threshold(
-                    feature_importance_dict=feature_importance_dict,
-                    X_train_transformed=X_train_ef,
-                    X_test_transformed=X_test_ef,
-                    min_importance_threshold=min_importance_threshold,
-                )
-
-                new_train = np.hstack((X_train, X_train_sr, X_train_top_ef))
-                # DÜZELTME: X_test_ef yerine X_test_top_ef kullanıldı
-                new_test = np.hstack((X_test, X_test_sr, X_test_top_ef))
-
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-            # --- STGP + EF BLOK ---
-            elif fe_model == 'STGP+EF':
-                # STGP Kısmı
-                stgp = SymbolicTransformer()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    stgp.fit(X_train, y_train)
-                    X_train_st = stgp.transform(X_train)
-                    X_test_st = stgp.transform(X_test)
-                    X_train_st = np.nan_to_num(X_train_st)
-                    X_test_st = np.nan_to_num(X_test_st)
-
-                X_train_top_st, X_test_top_st = select_st_features_by_threshold(
-                    X_train=X_train, y_train=y_train, X_test=X_test,
-                    st_train=X_train_st, st_test=X_test_st,
-                    min_importance_threshold=min_importance_threshold
-                )
-
-                # EF Kısmı
-                ef = EvolutionaryForestRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ef.fit(X_train, y_train)
-                    X_train_ef = ef.transform(X_train)
-                    X_test_ef = ef.transform(X_test)
-                    X_train_ef = np.nan_to_num(X_train_ef)
-                    X_test_ef = np.nan_to_num(X_test_ef)
-
-                feature_importance_dict = get_feature_importance(ef)
-
-                X_train_top_ef, X_test_top_ef = select_ef_features_by_threshold(
-                    feature_importance_dict=feature_importance_dict,
-                    X_train_transformed=X_train_ef,
-                    X_test_transformed=X_test_ef,
-                    min_importance_threshold=min_importance_threshold,
-                )
-
-                new_train = np.hstack((X_train, X_train_top_st, X_train_top_ef))
-                # DÜZELTME: X_test_ef yerine X_test_top_ef kullanıldı
-                new_test = np.hstack((X_test, X_test_top_st, X_test_top_ef))
-
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-            # --- SRGP + STGP + EF BLOK ---
-            elif fe_model == 'SRGP+STGP+EF':
-                # SRGP
-                srgp = SymbolicRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    srgp.fit(X_train, y_train)
-                    expr = srgp._program
-                    X_train_sr = np.nan_to_num(expr.execute(X_train).reshape(-1, 1))
-                    X_test_sr = np.nan_to_num(expr.execute(X_test).reshape(-1, 1))
-
-                # STGP
-                stgp = SymbolicTransformer()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    stgp.fit(X_train, y_train)
-                    X_train_st = stgp.transform(X_train)
-                    X_test_st = stgp.transform(X_test)
-                    X_train_st = np.nan_to_num(X_train_st)
-                    X_test_st = np.nan_to_num(X_test_st)
-
-                X_train_top_st, X_test_top_st = select_st_features_by_threshold(
-                    X_train=X_train, y_train=y_train, X_test=X_test,
-                    st_train=X_train_st, st_test=X_test_st,
-                    min_importance_threshold=min_importance_threshold
-                )
-
-                # EF
-                ef = EvolutionaryForestRegressor()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ef.fit(X_train, y_train)
-                    X_train_ef = ef.transform(X_train)
-                    X_test_ef = ef.transform(X_test)
-                    X_train_ef = np.nan_to_num(X_train_ef)
-                    X_test_ef = np.nan_to_num(X_test_ef)
-
-                feature_importance_dict = get_feature_importance(ef)
-
-                X_train_top_ef, X_test_top_ef = select_ef_features_by_threshold(
-                    feature_importance_dict=feature_importance_dict,
-                    X_train_transformed=X_train_ef,
-                    X_test_transformed=X_test_ef,
-                    min_importance_threshold=min_importance_threshold,
-                )
-
-                new_train = np.hstack((X_train, X_train_sr, X_train_top_st, X_train_top_ef))
-                # DÜZELTME: X_test_ef yerine X_test_top_ef kullanıldı
-                new_test = np.hstack((X_test, X_test_sr, X_test_top_st, X_test_top_ef))
-
-                dataset_results = get_algorithm_scores(X_train, y_train, X_test, y_test, new_train, new_test, d_name,
-                                                       algorithm)
-                all_results.extend(dataset_results)
-
-        except Exception as e:
-            print(f"Hata oluştu (Dataset ID: {set_id_val}): {e}")
-            continue
-
-    return all_results
-
-
-
-
-
-
-
-
-
