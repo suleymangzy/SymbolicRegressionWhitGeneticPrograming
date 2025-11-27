@@ -49,62 +49,129 @@ def apply_z_score_standardization(X: pd.DataFrame, y: Union[pd.Series, pd.DataFr
 def select_ef_features_by_threshold(feature_importance_dict: Dict[str, float], X_train_transformed: np.ndarray,
                                     X_test_transformed: np.ndarray, min_importance_threshold: float
                                     ) -> Tuple[np.ndarray, np.ndarray]:
+    # 1. Özellikleri önem sırasına göre diz (Büyükten küçüğe)
     sorted_features = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
 
+    # 2. Threshold'a göre filtrele
     selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
 
-    if not selected:
-        print(f"Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
-        selected = sorted_features[:3]
-        print(f"Selecting top 3 features instead: {[name for name, _ in selected]}")
+    # --- FALLBACK MEKANİZMASI ---
+    # Eğer threshold'u geçen özellik sayısı 5'ten azsa, otomatik olarak en iyi 5 taneyi al.
+    min_feature_count = 5
 
+    if len(selected) < min_feature_count:
+        print(f"Uyarı (EF): Threshold ({min_importance_threshold}) geçen özellik sayısı az ({len(selected)}).")
+        # Mevcut sayı 5'ten azsa hepsini, çoksa en iyi 5'ini al
+        limit = min(min_feature_count, len(sorted_features))
+        selected = sorted_features[:limit]
+        print(f"Top {limit} features were automatically selected.")
+
+    # --- RAPORLAMA (YENİ KISIM) ---
+    # Seçilen formülleri tablo halinde gösterir
+    print("\n" + "=" * 80)
+    print(f"Seçilen EF Özellikleri (Toplam: {len(selected)})")
+    print(f"{'No':<4} | {'Önem (Imp)':<15} | {'Formül / Özellik'}")
+    print("-" * 80)
+
+    for i, (name, imp) in enumerate(selected):
+        # Formül çok uzunsa tablo bozulmasın diye ilk 60 karakteri gösterip ... koyabiliriz
+        display_name = (name[:57] + '...') if len(name) > 60 else name
+        print(f"{i + 1:<4} | {imp:.5f}          | {display_name}")
+
+    print("=" * 80 + "\n")
+    # -----------------------------
+
+    # 3. İndeksleri belirle
     all_feature_names = list(feature_importance_dict.keys())
-    selected_indices = [all_feature_names.index(name) for name, _ in selected]
 
-    X_train_selected = X_train_transformed[:, selected_indices]
-    X_test_selected = X_test_transformed[:, selected_indices]
+    # Feature ismi (key) ile listedeki sırasını eşleştiriyoruz
+    raw_indices = [all_feature_names.index(name) for name, _ in selected]
 
-    print(f"Selected {len(selected_indices)} out of {len(all_feature_names)} EF features.")
+    # --- KRİTİK DÜZELTME (SAFETY CHECK) ---
+    # Matris boyutunu kontrol et
+    max_valid_index = X_train_transformed.shape[1] - 1
+
+    # Sadece matris boyut sınırları içinde kalan indeksleri al
+    valid_indices = [idx for idx in raw_indices if idx <= max_valid_index]
+
+    # Güvenlik kontrolü sonrası eldeki indeks sayısı azaldıysa bilgi ver
+    if len(valid_indices) < len(raw_indices):
+        print(f"Dropped {len(raw_indices) - len(valid_indices)} features that were out of bounds.")
+
+    # Eğer tüm indeksler sınır dışı kaldıysa (çok nadir), en baştaki geçerli sütunları al
+    if not valid_indices:
+        print("All selected features were out of bounds! Reverting to top available columns.")
+        # Mevcut matrisin ilk 5 (veya daha az) sütununu al
+        limit = min(min_feature_count, X_train_transformed.shape[1])
+        valid_indices = list(range(limit))
+
+    # 4. Seçimi Yap
+    X_train_selected = X_train_transformed[:, valid_indices]
+    X_test_selected = X_test_transformed[:, valid_indices]
+
+    print(f"Selected {len(valid_indices)} out of {len(all_feature_names)} EF features (Safe Mode).")
 
     return X_train_selected, X_test_selected
 
 
-def select_st_features_by_threshold(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, st_train: np.ndarray,
-                                    st_test: np.ndarray, min_importance_threshold: float) -> Tuple[
-    np.ndarray, np.ndarray]:
-    X_train_transformed = np.hstack([X_train, st_train])
-    X_test_transformed = np.hstack([X_test, st_test])
+def select_st_features_by_threshold(stgp_model, X_train: np.ndarray, X_test: np.ndarray,
+                                    min_threshold: float = 0.6) -> Tuple[np.ndarray, np.ndarray]:
+    best_programs = stgp_model._best_programs
 
-    rf = RandomForestRegressor(n_estimators=200, random_state=42)
-    rf.fit(X_train_transformed, y_train)
+    if not best_programs:
+        print("Uyarı: STGP modelinde kayıtlı program bulunamadı. Boş dizi dönülüyor.")
+        return np.zeros((X_train.shape[0], 0)), np.zeros((X_test.shape[0], 0))
 
-    importances = rf.feature_importances_
+    # 2. Programları fitness (başarı) değerine göre eşleştir
+    program_fitness_pairs = [(prog, prog.raw_fitness_) for prog in best_programs]
 
-    orig_names = [f"X{i}" for i in range(X_train.shape[1])]
-    st_names = [f"ST_feat_{i}" for i in range(st_train.shape[1])]
-    all_feature_names = orig_names + st_names
+    # 3. Büyükten küçüğe sırala
+    sorted_programs = sorted(program_fitness_pairs, key=lambda x: x[1], reverse=True)
 
-    feature_importance_dict = dict(zip(all_feature_names, importances))
+    # 4. Eşik değerine (threshold) göre filtrele
+    selected_programs = [prog for prog, fit in sorted_programs if fit >= min_threshold]
 
-    sorted_features = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
+    # --- GÜVENLİK VE FALLBACK MEKANİZMASI ---
+    min_feature_count = 5
 
-    selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_threshold]
+    # Not: User snippet'ındaki 'if not selected_programs' yerine daha güvenli olan
+    # 'sayı yetersizse' kontrolünü (önceki konuşmamızdaki gibi) kullanmak daha iyidir.
+    if len(selected_programs) < min_feature_count:
+        print(f"Uyarı: Threshold'u geçen özellik sayısı yetersiz veya yok ({len(selected_programs)}).")
+        # Mevcut program sayısı 5'ten azsa hepsini, çoksa en iyi 5'ini al
+        limit = min(min_feature_count, len(sorted_programs))
+        selected_programs = [prog for prog, _ in sorted_programs[:limit]]
+        print(f"Top {limit} features were automatically selected.")
 
-    if not selected:
-        print(f"Warning: No features found with importance ≥ {min_importance_threshold} in EF.")
-        selected = sorted_features[:3]
-        print(f"Selecting top 3 features instead: {[name for name, _ in selected]}")
+    # --- RAPORLAMA: Formülleri ve Puanları Göster (YENİ KISIM) ---
+    print("\n" + "=" * 60)
+    print(f"Seçilen STGP Özellikleri (Toplam: {len(selected_programs)})")
+    print(f"{'No':<4} | {'Fitness (Pearson)':<18} | {'Formül'}")
+    print("-" * 60)
 
-    all_feature_names = list(feature_importance_dict.keys())
-    selected_indices = [all_feature_names.index(name) for name, _ in selected]
+    for i, prog in enumerate(selected_programs):
+        # str(prog) -> Formülü verir (örn: add(X0, X1))
+        # prog.raw_fitness_ -> Puanı verir
+        print(f"{i + 1:<4} | {prog.raw_fitness_:.5f}            | {str(prog)}")
 
-    X_train_selected = X_train_transformed[:, selected_indices]
-    X_test_selected = X_test_transformed[:, selected_indices]
+    print("=" * 60 + "\n")
+    # -------------------------------------------------------------
 
-    print(f"Selected {len(selected_indices)} out of {len(all_feature_names)}  ST features.")
+    output_train = []
+    output_test = []
 
-    return X_train_selected, X_test_selected
+    for prog in selected_programs:
+        output_train.append(prog.execute(X_train))
+        output_test.append(prog.execute(X_test))
 
+    if not output_train:
+        return np.zeros((X_train.shape[0], 0)), np.zeros((X_test.shape[0], 0))
+
+    # 6. Listeleri numpy array (sütun bazlı) formatına çevir
+    X_train_st_selected = np.column_stack(output_train)
+    X_test_st_selected = np.column_stack(output_test)
+
+    return X_train_st_selected, X_test_st_selected
 
 def comparison_ef_srgp(sets_id: list) -> pd.DataFrame:
     results_list = []
