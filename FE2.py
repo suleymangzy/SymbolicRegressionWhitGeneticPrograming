@@ -33,26 +33,17 @@ def evaluate_models(X_train_new, X_test_new, y_train, y_test, dataset_name, meth
 
     for regr_name, model_instance in regressor_dict.items():
         try:
-            # # 1. Base Model (Ham veri)
-            # # Not: Base skoru her method için tekrar hesaplamak yerine dışarıda bir kez hesaplanabilir
-            # # ancak karşılaştırma kolaylığı için buraya ekliyoruz.
-            # base_model = clone(model_instance)
-            # base_model.fit(X_train_base, y_train)
-            # b_score = r2_score(y_test, base_model.predict(X_test_base))
 
-            # 2. Enhanced Model (Yeni özelliklerle)
             enh_model = clone(model_instance)
             enh_model.fit(X_train_new, y_train)
             e_score = r2_score(y_test, enh_model.predict(X_test_new))
 
-            # diff = e_score - b_score
 
             results.append({
                 'Algorithm': regr_name,
                 'Dataset': dataset_name,
                 'Method': method_name,
-                'Score': e_score  # Tabloda görünmesini istediğiniz değer (Improved Score)
-                # 'Difference': diff # Eğer tabloda farkı görmek isterseniz bunu kullanın
+                'Score': e_score
             })
 
         except Exception as e:
@@ -67,7 +58,7 @@ def evaluate_models(X_train_new, X_test_new, y_train, y_test, dataset_name, meth
     return results
 
 
-def run_comparative_analysis(sets_id, use_threshold=True, min_importance_threshold_ef=0.05, min_importance_threshold_stgp=0.60):
+def run_comparative_analysis(sets_id, use_threshold=True):
     all_results = []
 
     for set_id_val in sets_id:
@@ -146,20 +137,13 @@ def run_comparative_analysis(sets_id, use_threshold=True, min_importance_thresho
     if not all_results:
         return None
 
-    # --- TABLO OLUŞTURMA ---
     df_results = pd.DataFrame(all_results)
 
-    # İstenilen format: Index=Algorithm, Columns=[Dataset, Method]
     pivot_df = pd.pivot_table(
         df_results,
         index='Algorithm',
         columns=['Dataset', 'Method'],
-        values='Score'  # Buraya 'Difference' yazarsanız artış miktarını gösterir.
+        values='Score'
     )
 
     return pivot_df
-
-# --- KULLANIM ÖRNEĞİ ---
-# dataset_ids = [531, 537] # Örnek ID'ler
-# final_table = run_comparative_analysis(dataset_ids, use_threshold=True)
-# print(final_table)
