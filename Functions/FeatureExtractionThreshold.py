@@ -10,7 +10,7 @@ from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 from gplearn.genetic import SymbolicTransformer
 from evolutionary_forest.forest import EvolutionaryForestRegressor
-from Comparison import categorize_to_numeric
+from Functions.Comparison import categorize_to_numeric
 
 warnings.filterwarnings("ignore")
 
@@ -26,11 +26,9 @@ def evaluate_models(X_train_new, X_test_new, y_train, y_test, dataset_name, meth
 
     for regr_name, model_instance in regressor_dict.items():
         try:
-
             enh_model = clone(model_instance)
             enh_model.fit(X_train_new, y_train)
             e_score = r2_score(y_test, enh_model.predict(X_test_new))
-
 
             results.append({
                 'Algorithm': regr_name,
@@ -51,12 +49,12 @@ def evaluate_models(X_train_new, X_test_new, y_train, y_test, dataset_name, meth
     return results
 
 
-def run_comparative_analysis(sets_id, use_threshold=True):
+def run_comparative_analysis_five(sets_id, use_threshold=True):
     all_results = []
 
     for set_id_val in sets_id:
         try:
-            print(f"Procesing: Dataset ID {set_id_val}...")
+            print(f"Processing: Dataset ID {set_id_val}...")
             dataset = openml.datasets.get_dataset(set_id_val)
             d_name = f"{dataset.name}"
 
@@ -79,6 +77,9 @@ def run_comparative_analysis(sets_id, use_threshold=True):
             y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
 
             print(f'Raw {d_name} columns: {X_train.shape[1]}')
+
+            all_results.extend(evaluate_models(X_train, X_test,
+                                               y_train, y_test, d_name, "Base"))
 
             ef = EvolutionaryForestRegressor(random_state=42)
             ef.fit(X_train, y_train)
@@ -103,7 +104,6 @@ def run_comparative_analysis(sets_id, use_threshold=True):
             all_results.extend(evaluate_models(new_train_ef, new_test_ef,
                                                y_train, y_test, d_name, "EF"))
 
-
             stgp = SymbolicTransformer()
             stgp.fit(X_train, y_train)
 
@@ -124,7 +124,7 @@ def run_comparative_analysis(sets_id, use_threshold=True):
                                                y_train, y_test, d_name, "STGP+EF"))
 
         except Exception as e:
-            print(f"Genel Hata (ID: {set_id_val}): {e}")
+            print(f"General Error (ID: {set_id_val}): {e}")
             continue
 
     if not all_results:
