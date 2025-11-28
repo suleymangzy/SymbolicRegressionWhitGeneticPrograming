@@ -2,6 +2,7 @@ import warnings
 import openml
 import pandas as pd
 import numpy as np
+from evolutionary_forest.utils import get_feature_importance
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
@@ -104,16 +105,186 @@ def run_comparative_analysis_five(sets_id, use_threshold=True):
             all_results.extend(evaluate_models(new_train_ef, new_test_ef,
                                                y_train, y_test, d_name, "EF"))
 
-            stgp = SymbolicTransformer()
+            stgp = SymbolicTransformer(random_state=42)
             stgp.fit(X_train, y_train)
 
             X_train_st = stgp.transform(X_train)
             X_test_st = stgp.transform(X_test)
 
             if use_threshold:
-                limit = min(5, X_train_st.shape[1])
-                X_train_st = X_train_st[:, :limit]
-                X_test_st = X_test_st[:, :limit]
+                X_train_st = X_train_st[:, :5]
+                X_test_st = X_test_st[:, :5]
+
+            new_train_stgp_ef = np.hstack((X_train, X_train_st, X_train_ef))
+            new_test_stgp_ef = np.hstack((X_test, X_test_st, X_test_ef))
+
+            print(f'STGP+EF {d_name} columns: {new_train_stgp_ef.shape[1]}')
+
+            all_results.extend(evaluate_models(new_train_stgp_ef, new_test_stgp_ef,
+                                               y_train, y_test, d_name, "STGP+EF"))
+
+        except Exception as e:
+            print(f"General Error (ID: {set_id_val}): {e}")
+            continue
+
+    if not all_results:
+        return None
+
+    df_results = pd.DataFrame(all_results)
+
+    pivot_df = pd.pivot_table(
+        df_results,
+        index='Algorithm',
+        columns=['Dataset', 'Method'],
+        values='Score'
+    )
+
+    return pivot_df
+
+
+def run_comparative_analysis_threshold(sets_id, use_threshold=True, min_importance_feature_ef=0.05, min_importance_feature_stgp=0.80):
+    all_results = []
+
+    for set_id_val in sets_id:
+        try:
+            print(f"Processing: Dataset ID {set_id_val}...")
+            dataset = openml.datasets.get_dataset(set_id_val)
+            d_name = f"{dataset.name}"
+
+            X, y, _, _ = dataset.get_data(dataset_format="dataframe", target=dataset.default_target_attribute)
+
+            X = categorize_to_numeric(X)
+
+            X_vals = np.nan_to_num(X.values.astype(np.float64))
+            y_vals = y.values if isinstance(y, pd.Series) else y
+            y_vals = y_vals.astype(np.float64)
+
+            X_train, X_test, y_train, y_test = train_test_split(X_vals, y_vals, test_size=0.2, random_state=42)
+
+            scaler_x = StandardScaler()
+            X_train = scaler_x.fit_transform(X_train)
+            X_test = scaler_x.transform(X_test)
+
+            scaler_y = StandardScaler()
+            y_train = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+            y_test = scaler_y.transform(y_test.reshape(-1, 1)).ravel()
+
+            print(f'Raw {d_name} columns: {X_train.shape[1]}')
+
+            all_results.extend(evaluate_models(X_train, X_test,
+                                               y_train, y_test, d_name, "Base"))
+
+            # --- Evolutionary Forest (EF) ---
+            ef = EvolutionaryForestRegressor(random_state=42)
+            ef.fit(X_train, y_train)
+
+            X_train_ef = ef.transform(X_train)
+            X_test_ef = ef.transform(X_test)
+
+            feature_importance_dict = get_feature_importance(ef)
+
+            if use_threshold:
+                sorted_features = sorted(feature_importance_dict.items(), key=lambda x: x[1], reverse=True)
+                selected = [(name, imp) for name, imp in sorted_features if imp >= min_importance_feature_ef]
+
+                if not selected:
+                    print(f"Warning (EF): No features found with importance >= {min_importance_feature_ef}.")
+                    limit = min(5, len(sorted_features))
+                    selected = sorted_features[:limit]
+                    print(f"Fallback: Top {limit} features were automatically selected.")
+
+                print("\n" + "=" * 80)
+                print(f"Selected EF Features (Total: {len(selected)})")
+                print(f"{'Rank':<4} | {'Importance':<15} | {'Formula/Feature'}")
+                print("-" * 80)
+
+                for i, (name, imp) in enumerate(selected):
+                    display_name = (name[:57] + '...') if len(name) > 60 else name
+                    print(f"{i + 1:<4} | {imp:.5f}          | {display_name}")
+
+                print("=" * 80 + "\n")
+
+                all_feature_names = list(feature_importance_dict.keys())
+
+                raw_indices = [all_feature_names.index(name) for name, _ in selected]
+
+                max_valid_index = X_train_ef.shape[1] - 1
+
+                valid_indices = [idx for idx in raw_indices if idx <= max_valid_index]
+
+                if len(valid_indices) < len(raw_indices):
+                    print(f"Info: Dropped {len(raw_indices) - len(valid_indices)} features that were out of bounds.")
+
+                if not valid_indices:
+                    print("Error: All selected features were out of bounds! Reverting to top available columns.")
+                    limit = min(5, X_train_ef.shape[1])
+                    valid_indices = list(range(limit))
+
+                X_train_ef = X_train_ef[:, valid_indices]
+                X_test_ef = X_test_ef[:, valid_indices]
+            else:
+                limit = min(10, X_train_ef.shape[1])
+                X_train_ef = X_train_ef[:, :limit]
+                X_test_ef = X_test_ef[:, :limit]
+
+            new_train_ef = np.hstack((X_train, X_train_ef))
+            new_test_ef = np.hstack((X_test, X_test_ef))
+
+            print(f'EF {d_name} columns: {new_train_ef.shape[1]}')
+
+            all_results.extend(evaluate_models(new_train_ef, new_test_ef,
+                                               y_train, y_test, d_name, "EF"))
+
+            # --- Symbolic Transformer (STGP) ---
+            stgp = SymbolicTransformer(random_state=42)
+            stgp.fit(X_train, y_train)
+
+            X_train_st = stgp.transform(X_train)
+            X_test_st = stgp.transform(X_test)
+
+            if use_threshold:
+                best_programs = stgp._best_programs
+
+                if not best_programs:
+                    print("Warning: No programs found in STGP model. Skipping STGP feature selection.")
+                    return np.zeros((X_train.shape[0], 0)), np.zeros((X_test.shape[0], 0))
+
+                program_fitness_pairs = [(prog, prog.raw_fitness_) for prog in best_programs]
+
+                sorted_programs = sorted(program_fitness_pairs, key=lambda x: x[1], reverse=True)
+
+                selected_programs = [prog for prog, fit in sorted_programs if fit >= min_importance_feature_stgp]
+
+                if not selected_programs:
+                    print(f"Warning: No features passed the fitness threshold ({min_importance_feature_stgp}).")
+                    limit = min(5, len(sorted_programs))
+                    selected_programs = [prog for prog, _ in sorted_programs[:limit]]
+                    print(f"Fallback: Top {limit} features were automatically selected.")
+
+                print("\n" + "=" * 60)
+                print(f"Selected STGP Features (Total: {len(selected_programs)})")
+                print(f"{'Rank':<4} | {'Fitness (Pearson)':<18} | {'Formula'}")
+                print("-" * 60)
+
+                for i, prog in enumerate(selected_programs):
+                    print(f"{i + 1:<4} | {prog.raw_fitness_:.5f}            | {str(prog)}")
+
+                print("=" * 60 + "\n")
+
+                output_train = []
+                output_test = []
+
+                for prog in selected_programs:
+                    output_train.append(prog.execute(X_train))
+                    output_test.append(prog.execute(X_test))
+
+                if not output_train:
+                    # Same note as above regarding 'return' in a loop
+                    print("Error: STGP feature execution failed. Returning empty arrays.")
+                    return np.zeros((X_train.shape[0], 0)), np.zeros((X_test.shape[0], 0))
+
+                X_train_st = np.column_stack(output_train)
+                X_test_st = np.column_stack(output_test)
 
             new_train_stgp_ef = np.hstack((X_train, X_train_st, X_train_ef))
             new_test_stgp_ef = np.hstack((X_test, X_test_st, X_test_ef))
