@@ -2,7 +2,9 @@ import warnings
 import openml
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, GradientBoostingRegressor, AdaBoostRegressor
 from xgboost import XGBRegressor
 from gplearn.genetic import SymbolicTransformer, SymbolicRegressor
 from evolutionary_forest.forest import EvolutionaryForestRegressor
@@ -85,7 +87,13 @@ def run_comprehensive_analysis(sets_id):
     # Hakem Algoritmalar (Değerlendiriciler)
     judges = {
         'RF': RandomForestRegressor(n_estimators=200, n_jobs=-1, random_state=42),
-        'XGBoost': XGBRegressor(n_jobs=1, n_estimators=200, verbosity=0, random_state=42)
+        'XGBoost': XGBRegressor(n_jobs=1, n_estimators=200, verbosity=0, random_state=42),
+        'ET': ExtraTreesRegressor(n_estimators=200, n_jobs=-1),
+        'AdaBoost': AdaBoostRegressor(n_estimators=200),
+        'GBDT': GradientBoostingRegressor(n_estimators=200),
+        'DART': LGBMRegressor(n_jobs=1, n_estimators=200, boosting_type='dart', xgboost_dart_mode=True, verbose=-1),
+        'LightGBM': LGBMRegressor(n_jobs=1, n_estimators=200, verbose=-1),
+        'CatBoost': CatBoostRegressor(n_estimators=200, thread_count=1, verbose=False, allow_writing_files=False),
     }
 
     # Sütun İsimlendirmeleri
