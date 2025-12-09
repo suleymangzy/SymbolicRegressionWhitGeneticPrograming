@@ -8,14 +8,7 @@ from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, Gradien
 from xgboost import XGBRegressor
 from gplearn.genetic import SymbolicTransformer, SymbolicRegressor
 from evolutionary_forest.forest import EvolutionaryForestRegressor
-
-# EF isimlendirmesi için gerekli import
-try:
-    from evolutionary_forest.utils import get_feature_importance
-except ImportError:
-    # Eğer kütüphane versiyonunda utils altında değilse alternatif
-    from evolutionary_forest.utils import get_feature_importance
-
+from evolutionary_forest.utils import get_feature_importance
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from sklearn.base import clone
